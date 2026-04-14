@@ -1,0 +1,376 @@
+---
+title: "Studying the Effects of Childhood Incarceration on Household Income"
+author: "Manav Kalathil, Brent Arakaki, Kelly Ferrero, Vansh Gupta"
+date: "`r Sys.Date()`"
+output: pdf_document
+documentclass: article
+geometry: margin= 1 cm
+header-includes:
+ \usepackage{longtable}
+ \pagenumbering{gobble}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo =FALSE, warning = FALSE)
+```
+
+## Introduction
+
+Understanding how incarceration shapes later‑life economic outcomes is central to ongoing debates about intergenerational mobility and the long‑run consequences of incarceration. Our central research question asks: **How does the incarceration rate of children from low‑income households affect their mean household income rank in adulthood?** A secondary research question we have is: **How do these effects differ across race and gender?** This relationship matters for policymakers, sociologists, and economists interested in criminal justice reform as well as inequalities due to race, gender, and economic status. Understanding how race and gender interact with childhood incarceration’s effect on the child’s mean household income rank can guide policy towards racial and gender equity. Understanding how these phenomena interact with each other can guide criminal justice policy and economic policy focused on combatting intergenerational poverty. Policy makers can create penalties that balance justice and the future of the accused child. This can break the cyclical link between poverty and crime and uplift families and communities. By providing a descriptive, tract‑level analysis, our project adds to this broader conversation about how criminal justice and incarceration intersect with economic opportunity, specifically for children whose parents were at the 25th percentile of the national income distribution.
+
+## Description of Data Source
+
+This table, generated through research done by Harvard University's Opportunity Insights team, reports predicted outcomes for children by Census tract, race and gender. Each Census tract is uniquely identified by three identifiers – state, county, and tract (2010 FIPS codes). The data is organized long on Census tract and wide on race and gender, so that there is exactly one row per tract. The sample only includes children born between 1978 and 1983, whose parents were at the 25th percentile of the national income distribution. Parents' income is ranked relative to other parents with children in the same birth cohort. For income variables, children are ranked against other children in the same birth cohort. To protect privacy, a small amount of noise is added to each of the estimates; this noise is typically less than one-tenth the standard error of the estimate itself.
+
+### Dependent Variable
+
+-   **kfr\_[race]\_[gender]\_p25:** *Numeric* Mean household income rank for children whose parents were at the 25th percentile of the national income distribution. Incomes for children were measured as mean earnings in 2014-2015 when they were between the ages 31-37.Household income is defined as the sum of own and spouse’s income. Race is either Pooled, White, Black or Hispanic. Gender is one of pooled, male or female.
+
+### Covariates
+
+-   **state:** *Numeric* Two-digit state 2010 FIPS code
+-   **jail\_[race]\_[gender]\_p25:** *Numeric* Fraction of children born in 1978-1983 birth cohorts with parents at the 25th percentile of the national income distribution who were incarcerated on April 1st, 2010. Incarceration is defined as residing in a federal detention center, federal prison, state prison, local jail, residential correctional facility, military jail, or juvenile correctional facility. See kfr\_[race]\_[gender]\_p25 above for description of [race] and [gender]
+-   **[race]\_[gender]\_count**: *Numeric* Number of children under 18 living in the given tract with parents whose household income was below the national median. This is computed by multiplying the number of children living in the tract according to the 2000 Decennial Census by the fraction of children living in households in which the parents earn less than the national median in the relevant analysis sample. See kfr\_[race]\_[gender]\_p25 above for description of [race] and [gender]. We use this variable as our preferred population weighting variable when analyzing these outcomes across places.
+
+## Data Wrangling
+
+We use the Opportunity Atlas tract-level dataset, where each observation represents a Census tract. We subset the data to our outcome variable, mean household income rank (kfr_pooled_pooled_p25), and incarceration rates by race and gender along with their respective counts in the census tract. We also synthesize regional indicator variables to account for geographic differences across Census regions, based on state FIPS codes. Additionally, we exclude observations from Puerto Rico (state FIPS code 72), as these tracts are 100% null for key variables, reflecting data limitations.
+
+## Operationalization
+
+We operationalize our outcome concept, economic mobility, using mean household income rank (kfr_pooled_pooled_p25), which measures the average position in the national income distribution in adulthood for children whose parents were at the 25th percentile, ranked against other subjects in the same birth cohort. Our key explanatory concept, incarceration exposure, is operationalized using tract-level incarceration rates (jail\_[race]\_[gender]\_p25), defined as the fraction of individuals from the same cohort who were incarcerated as of April 1, 2010. These measures capture long-run economic outcomes and exposure to incarceration for a consistent cohort across Census tracts.
+
+However, these operationalizations have limitations. Incarceration is measured at a single point in time and may not fully reflect cumulative exposure. Additionally, both variables are measured at the tract level, meaning they reflect proportions rather than individual outcomes and masking within-tract heterogeneity. Alternative approaches could include individual-level data or more comprehensive measures of incarceration exposure, but these are not available in this dataset.
+
+## Data Visualization
+
+```{r message=FALSE, warning=FALSE,fig.width=6, fig.height=4, out.width="60%"}
+library(lmtest)
+library(stargazer)
+library(dplyr)
+library(sandwich)
+library(tidyverse)
+
+
+df <- read.csv("tract_outcomes_simple.csv")
+df <- df[df$state != 72, ] 
+df <- mutate(df, census_region = case_when(
+  df$state == 9 | df$state == 23 | df$state == 25 | df$state == 33
+  | df$state == 44 | df$state == 50 | df$state == 34 | df$state == 36
+  | df$state == 42 ~ "northeast",
+  df$state == 17 | df$state == 18 | df$state == 26 | df$state == 39 | 
+    df$state == 55 | df$state == 19 | df$state == 20 | df$state == 27 | 
+    df$state == 29 | df$state == 31 | df$state == 38 | df$state == 46 
+    ~ "midwest",
+  df$state == 10 |  df$state == 11 |  df$state == 12 |  df$state == 13 | 
+    df$state == 24 | df$state == 37 | df$state == 45 | df$state == 51 | 
+    df$state == 54 | df$state == 1 | df$state == 21 | df$state == 28 | 
+    df$state == 47 | df$state == 5 | df$state == 22 | df$state == 40 | 
+    df$state == 48 ~ "south",
+  df$state == 4 | df$state == 8 | df$state == 16 | df$state == 30 | 
+    df$state == 32 | df$state == 35 | df$state == 49 | df$state == 56 | 
+    df$state == 2 | df$state == 6 | df$state == 15 | df$state == 41 | 
+    df$state == 53 ~ "west",
+  TRUE ~ "other" ))
+```
+
+```{r message=FALSE, warning=FALSE}
+### add visualizations
+plot2 <- ggplot(df,aes(x = jail_black_pooled_p25,y = kfr_black_pooled_p25,color = census_region)) +
+scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+scale_y_continuous(limits = c(0,1),breaks = seq(0,1,by = 0.1)) +
+geom_point(alpha = 0.3, show.legend = FALSE) +
+scale_color_viridis_d() +
+geom_hline(yintercept = 0, color = "green", linetype = "dashed") +
+labs(
+x = "Black Incarceration Rate",
+y = "25th Percentile Mean Household Income Rank",
+color = "Census Region") + theme_minimal()
+
+library(patchwork)
+
+plot2 <- plot2
+
+# Save the specific variable
+#ggsave("plot2.jpg", width = 8, height = 6, units = "in", dpi = 300,plot = plot2)
+
+plot3 <- ggplot(df,aes(x = jail_white_pooled_p25,y = kfr_white_pooled_p25,color = census_region)) +
+scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+scale_y_continuous(limits = c(0,1),breaks = seq(0,1,by = 0.1)) +
+geom_point(alpha = 0.3, show.legend = FALSE) +
+scale_color_viridis_d() +
+geom_hline(yintercept = 0, color = "green", linetype = "dashed") +
+labs(
+x = "White Incarceration Rate",
+y = "25th Percentile Mean Household Income Rank",
+color = "Census Region") + theme_minimal()
+
+
+
+plot3 <- plot3
+
+# Save the specific variable
+#ggsave("plot3.jpg", width = 8, height = 6, units = "in", dpi = 300,plot = plot3)
+
+plot4 <- ggplot(df,aes(x = jail_hisp_pooled_p25,y = kfr_hisp_pooled_p25,color = census_region)) +
+scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+scale_y_continuous(limits = c(0,1),breaks = seq(0,1,by = 0.1)) +
+geom_point(alpha = 0.3) +
+scale_color_viridis_d() +
+geom_hline(yintercept = 0, color = "green", linetype = "dashed") +
+labs(
+x = "Hispanic Incarceration Rate",
+y = "25th Percentile Mean Household Income Rank",
+color = "Census Region") + theme_minimal()
+
+
+
+plot4 <- plot4
+plot5 <- ggplot(df,aes(x = jail_pooled_male_p25,y = kfr_pooled_male_p25,color = census_region)) +
+scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+scale_y_continuous(limits = c(0,1),breaks = seq(0,1,by = 0.1)) +
+geom_point(alpha = 0.3, show.legend = FALSE) +
+scale_color_viridis_d() +
+geom_hline(yintercept = 0, color = "blue", linetype = "dashed") +
+labs(
+x = "Male Incarceration Rate",
+y = "25th Percentile Mean Household Income Rank",
+color = "Census Region") + theme_minimal()
+
+
+plot5 <- plot5
+
+
+plot6 <- ggplot(df,aes(x = jail_pooled_female_p25,y = kfr_pooled_female_p25,color = census_region)) +
+scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+scale_y_continuous(limits = c(0,1),breaks = seq(0,1,by = 0.1)) +
+geom_point(alpha = 0.3) +
+scale_color_viridis_d() +
+geom_hline(yintercept = 0, color = "blue", linetype = "dashed") +
+labs(
+x = "Female Incarceration Rate",
+y = "25th Percentile Mean Household Income Rank",
+color = "Census Region") + theme_minimal() 
+
+
+plot_big1 = (plot2 |plot3 |plot4)
+
+plot_big2 = (plot5 |plot6)
+
+```
+
+```{r, fig.width=11, fig.height=4,}
+plot_big1 + plot_annotation(
+  title = 'Incarceration Rate vs Mean Income Rank by Race',
+  caption = 'Each data point represents a census region see Data Description section for definitions of variables.'
+)
+```
+
+```{r, fig.width=10, fig.height=4,}
+plot_big2 + plot_annotation(
+  title = 'Incarceration Rate vs Mean Income Rank by Gender',
+  caption = 'Each data point represents a census region see Data Description section for definitions of variables.'
+)
+```
+
+In Figure 1, we can see the shape of the dense part of the plot for Black households pushes out to the right more, implying the median Black incarceration rate is higher than other races, however, it is interesting to note that the White and Hispanic graphs show more severe outliers, specifically in the South and West. In Figure 2, we can see that males have higher incarceration rates than females for the same income rank. In both figures, we see that southern census tracts have higher incarceration rates across race and gender.
+
+## Model Specification
+
+```{r}
+# Manav -pooled model
+m1 <- lm(kfr_pooled_pooled_p25 ~ log(jail_pooled_pooled_p25) + I(log(jail_pooled_pooled_p25)^2), data= df,weights = pooled_pooled_count)
+
+se_pooled <- sqrt(diag(vcovHC(m1)))
+
+#Brent Census Region
+m2 <- lm(kfr_pooled_pooled_p25 ~ census_region, data = df, weights = pooled_pooled_count)
+
+se_region <- sqrt(diag(vcovHC(m2)))
+
+#Kelly - gender model
+m3 <- lm(
+  kfr_pooled_pooled_p25 ~ jail_pooled_male_p25 + jail_pooled_female_p25,
+  data = df,
+  weights = pooled_pooled_count
+)
+
+se_gender <- sqrt(diag(vcovHC(m3)))
+
+#Vansh Race model
+m4 <- lm(
+  kfr_pooled_pooled_p25 ~ jail_white_pooled_p25 + 
+                          jail_black_pooled_p25 + 
+                          jail_hisp_pooled_p25, 
+  data = df, 
+  weights = pooled_pooled_count
+)
+
+
+se_race_combined <- sqrt(diag(vcovHC(m4)))
+
+
+
+
+
+#Brent- Final Model
+m6 <- lm(kfr_pooled_pooled_p25 ~ log(jail_white_male_p25) +
+                    log(jail_white_female_p25) + log(jail_black_male_p25) +
+                    (jail_black_female_p25) + (jail_hisp_male_p25) +
+                    (jail_hisp_female_p25) + census_region,
+                    data = df,
+                    weights = pooled_pooled_count)
+
+
+se_final <- sqrt(diag(vcovHC(m6)))
+
+
+# all logged
+m6_logged<- lm(kfr_pooled_pooled_p25 ~ log(jail_white_male_p25) +
+                    log(jail_white_female_p25) + log(jail_black_male_p25) +
+                    log(jail_black_female_p25) + log(jail_hisp_male_p25) +
+                    log(jail_hisp_female_p25) + census_region,
+                    data = df,
+                    weights = pooled_pooled_count)
+
+se_final_logged <- sqrt(diag(vcovHC(m6_logged)))
+```
+
+```{r results='asis'}
+
+
+out<-capture.output(stargazer(
+  m1, m2, m3, m4,m6_logged,m6,
+  type = "latex",                     
+  title = "Studying the Effect of Childhood Incarceration on Communities' Household Income as Adults",
+  dep.var.labels = "Mean Household Income Rank for Adults Born in Low Income Households",
+  column.labels = c("Pooled Incarceration", "Region", "Gender", 
+                    "Race", "Logged Combined","Final"),
+
+  se = list(se_pooled, se_region, se_gender, se_race_combined, se_final_logged,se_final), 
+  omit.stat = c("f", "ser"), 
+  column.sep.width = "1pt",
+  no.space = TRUE,
+  float=FALSE,
+  summary = FALSE,
+  font.size = 'tiny'
+))
+
+
+# Replace tabular with longtable
+out <- gsub("\\{tabular\\}", "{longtable}", out)
+
+
+
+
+cat(out, sep = "\n")
+
+
+```
+
+Here we can see the specifications for models included in the report. Each of the 6 models were built stepwise, testing various transformations, to ensure correct functional form. The $ln$ transforms were used to stabilize the residuals to ensure our model had the correct functional form. The $ln(jail\_pooled\_pooled\_p25)^2$ term was included to model a non linear relationship between the log transformed covariate and the target variable.
+
+## Model Assumptions
+
+Since our dataset contains information from more than 70,000 census tracts, we can evaluate the large sample assumptions to determine if the final model is valid: IID data and the existence of a unique BLP. First, we determine if the data is IID. Independence requires that an observation does not convey information about any other observation. The data was not randomly sampled so there are obvious geographical dependencies in the data, despite being separated by census tract. For example, incarceration rates among counties could be similar if served by the same police force. Additionally, social mobility could be affected by state-level educational policies or school district quality, which could be reflected across many different census tracts. As a result of this clustering, there are effectively fewer observations to be seen since we can guess that geographically close regions have similar outcomes. Consequently, treating correlated tracts as independent pieces of information leads to standard errors that would be smaller than what is truly to be expected. Next, we look to see if the data comes from identical distributions. While the data is derived across the whole of the United States, there are geographical variations that could affect social mobility and incarceration, calling the identical distribution into question. When comparing major metropolitan tracts to rural tracts, it becomes clear that population size, which reduces data noise, and policy differences, like higher minimum wage or more robust social services, lead to different distributions. These concerns about identical distribution pose threats to generalization, but aggregation by census_region helps to ameliorate these differences. Finally, we need to evaluate whether a unique BLP exists. There must be a finite mean, a finite, non-zero variance, and no perfect collinearity. We found that the mean and variance of our included variables were finite, along with a lack of heavy tails which also suggests finite variance. Additionally, our model definitions have no independent variables that are linear combinations of others. Specifically for our categorical variables, a reference level is omitted from the model to ensure that a unique BLP exists.
+
+```{r message=FALSE, warning=FALSE}
+black_nas <-df %>%
+  summarise(across(contains("jail_black"),
+                   ~ mean(.x < 0, na.rm = TRUE)))
+# black male vs female ahve high disparity in nulls
+
+# variance of columns used
+
+cols <- grep("_p25$", names(df), value = TRUE)
+variances <- sapply(df[cols], var, na.rm = TRUE)
+
+
+
+```
+
+## Model Results and Interpretation
+
+Table 1 presents six regression specifications examining the relationship between childhood incarceration rates and adult mean household income rank across Census tracts. The baseline model in column (1) indicates a negative and statistically significant relationship between incarceration rates and income rank. The transformations tell us that the relationship is nonlinear. The negative association is present even at low incarceration levels, but it becomes increasingly severe as incarceration exposure rises
+
+Column (2) focuses on regional controls. The baseline represents the Midwest, we see that being in the Northeast and the West have a positive effect on a community’s mean household income when compared to the Midwest, while being in the South has a negative effect. It is important to note that the R-squared value for this model was the lowest, so any insights from this model should be taken with caution, although the LOESS line was flat and centered around zero.
+
+Column (3) separates incarceration by gender and shows that male incarceration rates are strongly negative and statistically significant, while the relationship with female incarceration rates is negative but lower in magnitude. Column (4) further disaggregates by race and shows negative associations across Black, White, and Hispanic populations, with stronger effects for Black and Hispanic groups. Again, it is important to note that the R-squared value is quite low, meaning insights should be taken with caution.
+
+Column (5) uses logged incarceration rates by race and gender. Looking at the logged final model, we see Black female incarceration having a positive relationship with mean household income. It is important to note that these findings may not be true as the data providers have added random noise to the dataset so incarceration rates can be negative if the incarceration rate is close to zero. Black females have a very high proportion of negative incarceration rates (38% percent for Black female vs 5% for Black males). When log transforming these numbers they become nulls, meaning nearly half of the Black female observations are not included in the model.
+
+This leads us to refocus on the non-logged model as the lack of representation from the logarithmic transformations will cause bias. Column (6), the final model, returns to a non-logged specification and avoids some of the null transformations in column (5). Our final model, Model 6, includes all combinations of race and gender along with location to provide a full picture of the effects of each covariate. We used the natural logarithm to transform White male, White female and Black male incarceration rates. While this does reduce our ability to compare the transformed variables to the raw ones, the LOESS line in the residual vs fitted plot for the raw relationships had a positive slope on the upper extremes of fitted values, indicating that a relationship was not being captured properly. Amongst the logged variables we see that all of them have a negative effect on a community's mean household income with Black male incarceration rates having the strongest negative effect. In more tangible terms, a 10% increase in Black male incarceration across the census tract predicts a 0.12 percentile decrease in expected mean household income. 10% increases in White male and female incarceration rates correspond to a 0.07 and 0.03 percentile decrease in expected mean household income, respectively. Moving on, we see that all the untransformed incarceration rate covariates have a negative effect as well, with Hispanic male having the highest magnitude effect. This model tells us that a 10% increase in Hispanic male incarceration leads to a 0.013 percentile decrease in mean household income for that tract. These findings confirm the first model as all incarceration covariates are negative. It is important to note that the Black and Hispanic female effects were deemed statistically insignificant. Finally we move to the region covariates and see that the communities in the Northeast, South, and West have positive effects on a community's mean household income when compared to the Midwest. Residing in one of these regions predicts a 2-3% increase in mean household income compared to the Midwest. This contradicts Model 2's south coefficient, we believe the final model gives a better estimate of the effect of region as it has an higher R squared value and includes more covariates, which could have acted as confounders in Model 2.
+
+# Apppendix
+
+## Residual vs Fitted Plot for Final Model
+
+```{r,message=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.align = 'center' }
+# Create a data frame of fitted values and residuals
+temp <- data.frame(fitted   = m6$fitted.values, 
+                 residual = m6$residuals
+)
+
+# Create a residual plot using ggplot2
+ggplot(data = temp, 
+       mapping = aes(x = fitted, 
+                     y = residual)
+) +
+  geom_point() +
+  geom_smooth() + 
+  xlab("Fitted Values") +
+  ylab("Residuals") +
+  ggtitle("Residual Plot")+theme(plot.title = element_text(hjust = 0.5))
+```
+
+**Link to Data Set:**<https://opportunityinsights.org/data/?geographic_level=0&topic=0&paper_id=1652#resource-listing> (used Household Income and Incarceration for Children from Low-Income Households by Census Tract, Race, and Gender)
+
+**List of Model Specification:**
+
+*Pooled Models*
+
+1 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1(jail\_pooled\_pooled\_p25_i) + \epsilon_i$
+
+2 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1(jail\_pooled\_pooled\_p25_i) + \beta_2(jail\_pooled\_pooled\_p25_i^2) + \epsilon_i$
+
+3 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1 \ln(jail\_pooled\_pooled\_p25_i) + \epsilon_i$
+
+4 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1 \ln(jail\_pooled\_pooled\_p25_i) + \beta_2 (\ln(jail\_pooled\_pooled\_p25_i))^2 + \epsilon_i$
+
+The raw model had a negative slope in the LOESS line and was centered around zero, model 4 did the best job of flattening the LOESS line while keeping it centered around zero. In model 4, we confirmed that higher childhood incarceration rates negatively influence mean household income as adults and that the relationship is nonlinear. the negative association is present even at low incarceration levels, but it becomes increasingly severe as incarceration exposure rises.All models were weighted with the pooled_pooled_count
+
+**Gender Models**
+
+1 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1(jail\_pooled\_male\_p25_i) + \epsilon_i$
+
+2 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1(jail\_pooled\_female\_p25_i) + \epsilon_i$
+
+3 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1(jail\_pooled\_male\_p25_i) + \beta_2(jail\_pooled\_female\_p25_i) + \epsilon_i$
+
+We first estimated linear weighted models separately for male and female incarceration rates to understand their individual relationships with income rank. Both showed negative associations, with male incarceration having a larger magnitude. When we included both in the same model, the male effect remained similar while the magnitude of the female effect decreased, suggesting the overall relationship is primarily driven by male incarceration.
+
+**Race Models**
+
+1 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1 (jail\_black\_pooled\_p25_i) + \epsilon_i$
+
+2 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1 (jail\_white\_pooled\_p25_i) + \epsilon_i$
+
+3 .$kfr\_pooled\_pooled\_p25_i = \beta_0 + \beta_1 (jail\_hisp\_pooled\_p25_i) + \epsilon_i$ \# Combined Race Model
+
+4 .$kfr\_pooled\_p25_i = \beta_0 + \beta_1 (jail\_white\_p25_i) + \beta_2 (jail\_black\_p25_i) + \beta_3 (jail\_hisp\_p25_i) + \epsilon_i$
+
+We used the first 3 models to understand the effects of incarceration within racial groups. However, this does not paint a complete picture as each race's incarceration rate was picking up the effects of general neighborhood poverty and overall crime. We then created a single model that included all racial groups, this forces the covariates to share the variance in the outcome and give a more accurate picture of the coefficients.
+
+**Combined Models**
+
+1 .$kfr\_pooled\_pooled\_p25 = \beta_0 + \beta_1 * jail\_white\_male\_p25 + \beta_2 * jail\_white\_female\_p25 + \beta_3 * jail\_black\_male\_p25 + \beta_4 * jail\_black\_female_p25 + \beta_5 * jail\_hisp\_male\_p25 + \beta_6 * jail\_hisp\_female\_p25 + \beta_7 * census\_region + \epsilon_i$
+
+2 .$kfr\_pooled\_pooled\_p25 = \beta_0 + \beta_1 * jail\_white\_male\_p25^2 + \beta_2 * jail\_white\_female\_p25 + \beta_3 * jail\_black\_male\_p25^2 + \beta_4 * jail\_black\_female\_p25 + \beta_5 * jail\_hisp\_male\_p25^2 + \beta_6 * jail\_hisp\_female\_p25 + \beta_7 * census\_region + \epsilon_i$
+
+3 .$kfr\_pooled\_pooled\_p25 = \beta_0 + \beta_1 * log(jail\_white\_male\_p25) + \beta_2 * log(jail\_white\_female\_p25) + \beta_3 * log(jail\_black\_male\_p25) + \beta_4 * log(jail\_black\_female\_p25) + \beta_5 * log(jail\_hisp\_male\_p25) + \beta_6 * log(jail\_hisp\_female\_p25) + \beta_7 * census\_region + \epsilon_i$
+
+4 .$kfr\_pooled\_pooled\_p25 = \beta_0 + \beta_1 * log(jail\_white\_male\_p25) + \beta_2 * log(jail\_white\_female\_p25) + \beta_3 * log(jail\_black\_male\_p25) + \beta_4 * jail\_black\_female\_p25 + \beta_5 * jail\_hisp\_male\_p25 + \beta_6 * jail\_hisp\_female\_p25 + \beta_7 * census\_region + \epsilon_i$
+
+In mode 1's residual vs. fitted plot the residuals were consistently larger at the extremes of the fitted values, implying incorrect functional form. Upon trying model 2, the residuals looked slightly worse at the extremes, compared to Model 1. To ameliorate this issue, we used logarithms on all terms, this yielded a LOESS line that was lower at the extremes of the fitted values. Finally we found that model 4 reduced the effect seen before but did not introduce the bias present when taking the logarithm of all values. Census Region is categorical, we did not make any transformations.
+
+
